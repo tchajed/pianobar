@@ -453,6 +453,8 @@ int main (int argc, char **argv) {
 			BarUiMsg (&app.settings, MSG_INFO, "Control fifo at %s opened\n",
 					app.settings.fifo);
 		}
+	} else {
+		BarUiMsg (&app.settings, MSG_ERR, "Could not open fifo at %s\n", app.settings.fifo);
 	}
 	app.input.maxfd = app.input.fds[0] > app.input.fds[1] ? app.input.fds[0] :
 			app.input.fds[1];
