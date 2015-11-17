@@ -59,9 +59,10 @@ typedef enum {
 	BAR_KS_PLAY = 26,
 	BAR_KS_PAUSE = 27,
 	BAR_KS_VOLRESET = 28,
-	BAR_KS_CLEAR = 29,
+	BAR_KS_SETTINGS = 29,
+	BAR_KS_CLEAR = 30,
 	/* insert new shortcuts _before_ this element and increase its value */
-	BAR_KS_COUNT = 30,
+	BAR_KS_COUNT = 31,
 } BarKeyShortcutId_t;
 
 #define BAR_KS_DISABLED '\x00'

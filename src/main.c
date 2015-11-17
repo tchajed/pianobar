@@ -21,11 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-#ifndef __FreeBSD__
-#define _POSIX_C_SOURCE 1 /* fileno() */
-#define _BSD_SOURCE /* strdup() */
-#define _DARWIN_C_SOURCE /* strdup() on OS X */
-#endif
+#include "config.h"
 
 /* system includes */
 #include <stdlib.h>
@@ -56,7 +52,6 @@ THE SOFTWARE.
 
 #include "main.h"
 #include "terminal.h"
-#include "config.h"
 #include "ui.h"
 #include "ui_dispatch.h"
 #include "ui_readline.h"
@@ -77,6 +72,7 @@ static bool BarMainLoginUser (BarApp_t *app) {
 	ret = BarUiPianoCall (app, PIANO_REQUEST_LOGIN, &reqData, &pRet, &wRet);
 	BarUiStartEventCmd (&app->settings, "userlogin", NULL, NULL, &app->player,
 			NULL, pRet, wRet);
+
 	return ret;
 }
 
@@ -203,7 +199,7 @@ static void BarMainGetInitialStation (BarApp_t *app) {
 static void BarMainHandleUserInput (BarApp_t *app) {
 	char buf[2];
 	if (BarReadline (buf, sizeof (buf), NULL, &app->input,
-			BAR_RL_FULLRETURN | BAR_RL_NOECHO, 1) > 0) {
+			BAR_RL_FULLRETURN | BAR_RL_NOECHO | BAR_RL_NOINT, 1) > 0) {
 		BarUiDispatch (app, buf[0], app->curStation, app->playlist, true,
 				BAR_DC_GLOBAL);
 	}
@@ -263,6 +259,9 @@ static void BarMainStartPlayback (BarApp_t *app, pthread_t *playerThread) {
 		pthread_mutex_init (&app->player.pauseMutex, NULL);
 		pthread_cond_init (&app->player.pauseCond, NULL);
 
+		assert (interrupted == NULL);
+		interrupted = &app->player.interrupted;
+
 		/* throw event */
 		BarUiStartEventCmd (&app->settings, "songstart",
 				app->curStation, curSong, &app->player, app->ph.stations,
@@ -305,6 +304,9 @@ static void BarMainPlayerCleanup (BarApp_t *app, pthread_t *playerThread) {
 	}
 
 	memset (&app->player, 0, sizeof (app->player));
+
+	assert (interrupted == &app->player.interrupted);
+	interrupted = NULL;
 }
 
 /*	print song duration
@@ -388,6 +390,23 @@ static void BarMainLoop (BarApp_t *app) {
 	}
 }
 
+sig_atomic_t *interrupted = NULL;
+
+static void intHandler (int signal) {
+	if (interrupted != NULL) {
+		*interrupted = 1;
+	}
+}
+
+static void BarMainSetupSigaction () {
+	struct sigaction act = {
+			.sa_handler = intHandler,
+			.sa_flags = 0,
+			};
+	sigemptyset (&act.sa_mask);
+	sigaction (SIGINT, &act, NULL);
+}
+
 int main (int argc, char **argv) {
 	static BarApp_t app;
 
@@ -395,6 +414,7 @@ int main (int argc, char **argv) {
 
 	/* save terminal attributes, before disabling echoing */
 	BarTermInit ();
+	BarMainSetupSigaction ();
 
 	/* signals */
 	signal (SIGPIPE, SIG_IGN);

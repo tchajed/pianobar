@@ -23,6 +23,8 @@ THE SOFTWARE.
 
 /* receive/play audio stream */
 
+#include "config.h"
+
 #include <unistd.h>
 #include <string.h>
 #include <math.h>
@@ -30,8 +32,6 @@ THE SOFTWARE.
 #include <limits.h>
 #include <assert.h>
 #include <arpa/inet.h>
-
-#include "config.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
@@ -45,9 +45,7 @@ THE SOFTWARE.
 #endif
 #include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
-#ifndef HAVE_AV_TIMEOUT
-#include <libavutil/time.h>
-#endif
+#include <libavutil/frame.h>
 
 #include "player.h"
 #include "ui.h"
@@ -77,7 +75,6 @@ void BarPlayerInit () {
 
 void BarPlayerDestroy () {
 	avformat_network_deinit ();
-	avfilter_uninit ();
 	ao_shutdown ();
 }
 
@@ -117,23 +114,19 @@ void BarPlayerSetVolume (player_t * const player) {
 	printError (player->settings, msg, ret); \
 	return false;
 
-#ifndef HAVE_AV_TIMEOUT
-/*	interrupt callback for libav, which lacks a timeout option
- *
- *	obviously calling ping() a lot of times and then calling av_gettime here
- *	again is rather inefficient.
+/*	interrupt callback for blocking setup functions from openStream
  */
 static int intCb (void * const data) {
 	player_t * const player = data;
 	assert (player != NULL);
-	/* 10 seconds timeout (usec) */
-	return (av_gettime () - player->ping) > 10*1000000;
+	if (player->interrupted != 0) {
+		/* the request is retried with the same player context */
+		player->interrupted = 0;
+		return 1;
+	} else {
+		return 0;
+	}
 }
-
-#define ping() player->ping = av_gettime ()
-#else
-#define ping()
-#endif
 
 static bool openStream (player_t * const player) {
 	assert (player != NULL);
@@ -143,27 +136,15 @@ static bool openStream (player_t * const player) {
 	int ret;
 
 	/* stream setup */
-	AVDictionary *options = NULL;
-#ifdef HAVE_AV_TIMEOUT
-	/* 10 seconds timeout on TCP r/w */
-	av_dict_set (&options, "timeout", "10000000", 0);
-#else
-	/* libav does not support the timeout option above. the workaround stores
-	 * the current time with ping() now and then, registers an interrupt
-	 * callback (below) and compares saved/current time in this callback. it’s
-	 * not bullet-proof, but seems to work fine for av_read_frame. */
 	player->fctx = avformat_alloc_context ();
 	player->fctx->interrupt_callback.callback = intCb;
 	player->fctx->interrupt_callback.opaque = player;
-#endif
 
 	assert (player->url != NULL);
-	ping ();
-	if ((ret = avformat_open_input (&player->fctx, player->url, NULL, &options)) < 0) {
+	if ((ret = avformat_open_input (&player->fctx, player->url, NULL, NULL)) < 0) {
 		softfail ("Unable to open audio file");
 	}
 
-	ping ();
 	if ((ret = avformat_find_stream_info (player->fctx, NULL)) < 0) {
 		softfail ("find_stream_info");
 	}
@@ -173,7 +154,6 @@ static bool openStream (player_t * const player) {
 		player->fctx->streams[i]->discard = AVDISCARD_ALL;
 	}
 
-	ping ();
 	player->streamIdx = av_find_best_stream (player->fctx, AVMEDIA_TYPE_AUDIO,
 			-1, -1, NULL, 0);
 	if (player->streamIdx < 0) {
@@ -195,7 +175,6 @@ static bool openStream (player_t * const player) {
 	}
 
 	if (player->lastTimestamp > 0) {
-		ping ();
 		av_seek_frame (player->fctx, player->streamIdx, player->lastTimestamp, 0);
 	}
 
@@ -240,7 +219,7 @@ static bool openFilter (player_t * const player) {
 
 	/* volume */
 	if ((ret = avfilter_graph_create_filter (&player->fvolume,
-			avfilter_get_by_name ("volume"), NULL, NULL, NULL,
+			avfilter_get_by_name ("volume"), NULL, "0dB", NULL,
 			player->fgraph)) < 0) {
 		softfail ("create_filter volume");
 	}
@@ -309,13 +288,12 @@ static int play (player_t * const player) {
 	pkt.size = 0;
 
 	AVFrame *frame = NULL, *filteredFrame = NULL;
-	frame = avcodec_alloc_frame ();
+	frame = av_frame_alloc ();
 	assert (frame != NULL);
-	filteredFrame = avcodec_alloc_frame ();
+	filteredFrame = av_frame_alloc ();
 	assert (filteredFrame != NULL);
 
 	while (!player->doQuit) {
-		ping ();
 		int ret = av_read_frame (player->fctx, &pkt);
 		if (ret < 0) {
 			av_free_packet (&pkt);
@@ -357,20 +335,10 @@ static int play (player_t * const player) {
 				assert (ret >= 0);
 
 				while (true) {
-					AVFilterBufferRef *audioref = NULL;
-#ifdef HAVE_AV_BUFFERSINK_GET_BUFFER_REF
-					/* ffmpeg’s compatibility layer is broken in some releases */
-					if (av_buffersink_get_buffer_ref (player->fbufsink,
-							&audioref, 0) < 0) {
-#else
-					if (av_buffersink_read (player->fbufsink, &audioref) < 0) {
-#endif
+					if (av_buffersink_get_frame (player->fbufsink, filteredFrame) < 0) {
 						/* try again next frame */
 						break;
 					}
-
-					ret = avfilter_copy_buf_props (filteredFrame, audioref);
-					assert (ret >= 0);
 
 					const int numChannels = av_get_channel_layout_nb_channels (
 							filteredFrame->channel_layout);
@@ -378,7 +346,7 @@ static int play (player_t * const player) {
 					ao_play (player->aoDev, (char *) filteredFrame->data[0],
 							filteredFrame->nb_samples * numChannels * bps);
 
-					avfilter_unref_bufferp (&audioref);
+					av_frame_unref (filteredFrame);
 				}
 			}
 
@@ -392,8 +360,8 @@ static int play (player_t * const player) {
 		player->lastTimestamp = pkt.pts;
 	}
 
-	avcodec_free_frame (&filteredFrame);
-	avcodec_free_frame (&frame);
+	av_frame_free (&filteredFrame);
+	av_frame_free (&frame);
 
 	return 0;
 }

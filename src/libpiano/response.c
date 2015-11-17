@@ -21,10 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-#ifndef __FreeBSD__
-#define _BSD_SOURCE /* required by strdup() */
-#define _DARWIN_C_SOURCE /* strdup() on OS X */
-#endif
+#include "../config.h"
 
 #include <json.h>
 #include <string.h>
@@ -411,6 +408,7 @@ PianoReturn_t PianoResponse (PianoHandle_t *ph, PianoRequest_t *req) {
 		case PIANO_REQUEST_BOOKMARK_ARTIST:
 		case PIANO_REQUEST_DELETE_FEEDBACK:
 		case PIANO_REQUEST_DELETE_SEED:
+		case PIANO_REQUEST_CHANGE_SETTINGS:
 			/* response unused */
 			break;
 
@@ -505,6 +503,17 @@ PianoReturn_t PianoResponse (PianoHandle_t *ph, PianoRequest_t *req) {
 					}
 				}
 			}
+			break;
+		}
+
+		case PIANO_REQUEST_GET_SETTINGS: {
+			PianoSettings_t * const settings = req->data;
+
+			assert (settings != NULL);
+
+			settings->explicitContentFilter = json_object_get_boolean (
+					json_object_object_get (result, "isExplicitContentFilterEnabled"));
+			settings->username = PianoJsonStrdup (result, "username");
 			break;
 		}
 

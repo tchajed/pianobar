@@ -24,6 +24,8 @@ THE SOFTWARE.
 #ifndef SRC_LIBPIANO_PIANO_H_MFBT13PN
 #define SRC_LIBPIANO_PIANO_H_MFBT13PN
 
+#include "../config.h"
+
 #include <stdbool.h>
 #ifdef __FreeBSD__
 #define _GCRYPT_IN_LIBGCRYPT
@@ -148,6 +150,11 @@ typedef struct {
 	PianoSong_t *feedback;
 } PianoStationInfo_t;
 
+typedef struct {
+	char *username;
+	bool explicitContentFilter;
+} PianoSettings_t;
+
 typedef enum {
 	/* 0 is reserved: memset (x, 0, sizeof (x)) */
 	PIANO_REQUEST_LOGIN = 1,
@@ -170,6 +177,8 @@ typedef enum {
 	PIANO_REQUEST_GET_STATION_INFO = 20,
 	PIANO_REQUEST_DELETE_FEEDBACK = 21,
 	PIANO_REQUEST_DELETE_SEED = 22,
+	PIANO_REQUEST_GET_SETTINGS = 23,
+	PIANO_REQUEST_CHANGE_SETTINGS = 24,
 } PianoRequestType_t;
 
 typedef struct PianoRequest {
@@ -244,6 +253,18 @@ typedef struct {
 	PianoArtist_t *artist;
 	PianoStation_t *station;
 } PianoRequestDataDeleteSeed_t;
+
+typedef enum {
+	PIANO_UNDEFINED = 0,
+	PIANO_FALSE = 1,
+	PIANO_TRUE = 2,
+} PianoTristate_t;
+
+typedef struct {
+	char *currentUsername, *newUsername;
+	char *currentPassword, *newPassword;
+	PianoTristate_t explicitContentFilter;
+} PianoRequestDataChangeSettings_t;
 
 /* pandora error code offset */
 #define PIANO_RET_OFFSET 1024

@@ -6,15 +6,13 @@
 
 #define VERSION "2014.09.28-dev"
 
+/* glibc feature test macros, define _before_ including other files */
+#define _POSIX_C_SOURCE 200809L
+
 /* ffmpeg/libav quirks detection
  * ffmpeg’s micro versions always start at 100, that’s how we can distinguish
  * ffmpeg and libav */
 #include <libavfilter/version.h>
-
-/* is "timeout" option present (all versions of ffmpeg, not libav) */
-#if LIBAVFILTER_VERSION_MICRO >= 100
-#define HAVE_AV_TIMEOUT
-#endif
 
 /* does graph_send_command exist (ffmpeg >=2.2) */
 #if LIBAVFILTER_VERSION_MAJOR >= 4 && \
