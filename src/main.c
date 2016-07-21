@@ -177,20 +177,17 @@ static bool BarMainGetStations (BarApp_t *app) {
 static void BarMainGetInitialStation (BarApp_t *app) {
 	/* try to get autostart station */
 	if (app->settings.autostartStation != NULL) {
-		app->curStation = PianoFindStationById (app->ph.stations,
+		app->nextStation = PianoFindStationById (app->ph.stations,
 				app->settings.autostartStation);
-		if (app->curStation == NULL) {
+		if (app->nextStation == NULL) {
 			BarUiMsg (&app->settings, MSG_ERR,
 					"Error: Autostart station not found.\n");
 		}
 	}
 	/* no autostart? ask the user */
-	if (app->curStation == NULL) {
-		app->curStation = BarUiSelectStation (app, app->ph.stations,
+	if (app->nextStation == NULL) {
+		app->nextStation = BarUiSelectStation (app, app->ph.stations,
 				"Select station: ", NULL, app->settings.autoselect);
-	}
-	if (app->curStation != NULL) {
-		BarUiPrintStation (&app->settings, app->curStation);
 	}
 }
 
@@ -211,20 +208,21 @@ static void BarMainGetPlaylist (BarApp_t *app) {
 	PianoReturn_t pRet;
 	CURLcode wRet;
 	PianoRequestDataGetPlaylist_t reqData;
-	reqData.station = app->curStation;
+	reqData.station = app->nextStation;
 	reqData.quality = app->settings.audioQuality;
 
 	BarUiMsg (&app->settings, MSG_INFO, "Receiving new playlist... ");
 	if (!BarUiPianoCall (app, PIANO_REQUEST_GET_PLAYLIST,
 			&reqData, &pRet, &wRet)) {
-		app->curStation = NULL;
+		app->nextStation = NULL;
 	} else {
 		app->playlist = reqData.retPlaylist;
 		if (app->playlist == NULL) {
 			BarUiMsg (&app->settings, MSG_INFO, "No tracks left.\n");
-			app->curStation = NULL;
+			app->nextStation = NULL;
 		}
 	}
+	app->curStation = app->nextStation;
 	BarUiStartEventCmd (&app->settings, "stationfetchplaylist",
 			app->curStation, app->playlist, &app->player, app->ph.stations,
 			pRet, wRet);
@@ -259,7 +257,7 @@ static void BarMainStartPlayback (BarApp_t *app, pthread_t *playerThread) {
 		pthread_mutex_init (&app->player.pauseMutex, NULL);
 		pthread_cond_init (&app->player.pauseCond, NULL);
 
-		assert (interrupted == NULL);
+		assert (interrupted == &app->doQuit);
 		interrupted = &app->player.interrupted;
 
 		/* throw event */
@@ -297,16 +295,16 @@ static void BarMainPlayerCleanup (BarApp_t *app, pthread_t *playerThread) {
 		++app->playerErrors;
 		if (app->playerErrors >= app->settings.maxPlayerErrors) {
 			/* don't continue playback if thread reports too many error */
-			app->curStation = NULL;
+			app->nextStation = NULL;
 		}
 	} else {
-		app->curStation = NULL;
+		app->nextStation = NULL;
 	}
 
 	memset (&app->player, 0, sizeof (app->player));
 
 	assert (interrupted == &app->player.interrupted);
-	interrupted = NULL;
+	interrupted = &app->doQuit;
 }
 
 /*	print song duration
@@ -355,12 +353,15 @@ static void BarMainLoop (BarApp_t *app) {
 	while (!app->doQuit) {
 		/* song finished playing, clean up things/scrobble song */
 		if (app->player.mode == PLAYER_FINISHED) {
+			if (app->player.interrupted != 0) {
+				app->doQuit = 1;
+			}
 			BarMainPlayerCleanup (app, &playerThread);
 		}
 
 		/* check whether player finished playing and start playing new
 		 * song */
-		if (app->player.mode == PLAYER_DEAD && app->curStation != NULL) {
+		if (app->player.mode == PLAYER_DEAD) {
 			/* what's next? */
 			if (app->playlist != NULL) {
 				PianoSong_t *histsong = app->playlist;
@@ -368,7 +369,10 @@ static void BarMainLoop (BarApp_t *app) {
 				histsong->head.next = NULL;
 				BarUiHistoryPrepend (app, histsong);
 			}
-			if (app->playlist == NULL) {
+			if (app->playlist == NULL && app->nextStation != NULL && !app->doQuit) {
+				if (app->nextStation != app->curStation) {
+					BarUiPrintStation (&app->settings, app->nextStation);
+				}
 				BarMainGetPlaylist (app);
 			}
 			/* song ready to play */
@@ -394,7 +398,7 @@ sig_atomic_t *interrupted = NULL;
 
 static void intHandler (int signal) {
 	if (interrupted != NULL) {
-		*interrupted = 1;
+		*interrupted += 1;
 	}
 }
 
@@ -414,10 +418,11 @@ int main (int argc, char **argv) {
 
 	/* save terminal attributes, before disabling echoing */
 	BarTermInit ();
-	BarMainSetupSigaction ();
 
 	/* signals */
 	signal (SIGPIPE, SIG_IGN);
+	BarMainSetupSigaction ();
+	interrupted = &app.doQuit;
 
 	/* init some things */
 	gcry_check_version (NULL);
