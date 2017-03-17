@@ -111,6 +111,7 @@ void BarSettingsInit (BarSettings_t *settings) {
 void BarSettingsDestroy (BarSettings_t *settings) {
 	free (settings->controlProxy);
 	free (settings->proxy);
+	free (settings->bindTo);
 	free (settings->username);
 	free (settings->password);
 	free (settings->passwordCmd);
@@ -159,6 +160,7 @@ void BarSettingsRead (BarSettings_t *settings) {
 	settings->autoselect = true;
 	settings->history = 5;
 	settings->volume = 0;
+	settings->gainMul = 1.0;
 	settings->maxPlayerErrors = 5;
 	settings->sortOrder = BAR_SORT_NAME_AZ;
 	settings->loveIcon = strdup (" <3");
@@ -200,9 +202,8 @@ void BarSettingsRead (BarSettings_t *settings) {
 	for (size_t j = 0; j < sizeof (configfiles) / sizeof (*configfiles); j++) {
 		static const char *formatMsgPrefix = "format_msg_";
 		FILE *configfd;
-		/* getline allocates these on the first run */
-		char *line = NULL;
-		size_t lineLen = 0, lineNum = 0;
+		char line[512];
+		size_t lineNum = 0;
 
 		char * const path = BarGetXdgConfigDir (configfiles[j]);
 		assert (path != NULL);
@@ -213,10 +214,15 @@ void BarSettingsRead (BarSettings_t *settings) {
 
 		while (1) {
 			++lineNum;
-			ssize_t ret = getline (&line, &lineLen, configfd);
-			if (ret == -1) {
+			char * const ret = fgets (line, sizeof (line), configfd);
+			if (ret == NULL) {
 				/* EOF or error */
 				break;
+			}
+			if (strchr (line, '\n') == NULL && !feof (configfd)) {
+				BarUiMsg (settings, MSG_INFO, "Line %s:%zu too long, "
+						"ignoring\n", path, lineNum);
+				continue;
 			}
 			/* parse lines that match "^\s*(.*?)\s?=\s?(.*)$". Windows and Unix
 			 * line terminators are supported. */
@@ -269,6 +275,8 @@ void BarSettingsRead (BarSettings_t *settings) {
 				settings->controlProxy = strdup (val);
 			} else if (streq ("proxy", key)) {
 				settings->proxy = strdup (val);
+			} else if (streq ("bind_to", key)) {
+				settings->bindTo = strdup (val);
 			} else if (streq ("user", key)) {
 				settings->username = strdup (val);
 			} else if (streq ("password", key)) {
@@ -355,6 +363,8 @@ void BarSettingsRead (BarSettings_t *settings) {
 				settings->atIcon = strdup (val);
 			} else if (streq ("volume", key)) {
 				settings->volume = atoi (val);
+			} else if (streq ("gain_mul", key)) {
+				settings->gainMul = atof (val);
 			} else if (streq ("format_nowplaying_song", key)) {
 				free (settings->npSongFormat);
 				settings->npSongFormat = strdup (val);
@@ -407,7 +417,6 @@ void BarSettingsRead (BarSettings_t *settings) {
 
 		fclose (configfd);
 		free (path);
-		free (line);
 	}
 
 	/* check environment variable if proxy is not set explicitly */

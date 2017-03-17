@@ -88,12 +88,14 @@ typedef struct {
 	bool autoselect;
 	unsigned int history, maxPlayerErrors;
 	int volume;
+	float gainMul;
 	BarStationSorting_t sortOrder;
 	PianoAudioQuality_t audioQuality;
 	char *username;
 	char *password, *passwordCmd;
 	char *controlProxy; /* non-american listeners need this */
 	char *proxy;
+	char *bindTo;
 	char *autostartStation;
 	char *eventCmd;
 	char *loveIcon;
